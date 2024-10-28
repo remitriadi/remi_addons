@@ -5,6 +5,7 @@ from pathlib import Path
 import time
 import threading
 import requests
+import shutil
 from bpy.app.handlers import persistent
 
 
@@ -61,6 +62,102 @@ downloaded_folder = os.path.join(assets_browser_path, "downloaded")
 proxies_folder = os.path.join(assets_browser_path, "proxies")
 geometry_nodes_folder = os.path.join(assets_browser_path, "geometry_nodes")
 
+def update_addons():
+    print('Update addons')
+    # path_to_remi_addons = os.path.dirname(os.path.abspath(__file__))
+    # os.rmdir(path_to_remi_addons)
+    # shutil.rmtree(path_to_remi_addons)
+    # print('Delete addons')
+
+def purge_corrupted_assets():
+        # Purge all corrupted proxies
+        proxies_list = os.listdir(proxies_folder)
+        for proxies_file in proxies_list:
+            proxies_filepath = os.path.join(proxies_folder, proxies_file)
+            file_stats = os.stat(proxies_filepath)
+            #Purge corrupted if file below 50kb
+            if(file_stats.st_size < 50000):
+                os.remove(proxies_filepath)
+            # Purge duplicated in downloaded
+            downloaded_filepath = os.path.join(downloaded_folder, proxies_file)
+            if(os.path.exists(downloaded_filepath)):
+                os.remove(proxies_filepath)
+
+# Request to backend
+# Download all geonodes to geonodes folder
+def update_geonodes():
+    url = "https://remitriadi.com/api/getAllGeoNodesName"
+    r = requests.get(url)
+    blender_version = bpy.app.version
+
+    def get_version_value(version_array):
+        return (int(version_array[0]) * 10000) + (int(version_array[1]) * 100) + (int(version_array[2]) * 1)
+    blender_version_value = get_version_value(blender_version)
+
+    geonodes_online = sorted(r.json())
+    # Start Updating
+    for geonode in geonodes_online:
+        # Check if current blender version larger than the geonodes, if yes, update
+        geonode_version = geonode['version'].split('.')
+        geonode_version_value = get_version_value(geonode_version)
+
+        print(geonode_version_value, blender_version_value)
+
+        if geonode_version_value <= blender_version_value:
+            print('THIS GEONODE WILL BE DOWNLOADED')
+            # Check if it's not in downloaded folder and proxies folder
+            url = f"http://remitriadi.org/geometry_nodes/{geonode['name']}.blend"
+            response = requests.get(url)
+            open(os.path.join(geometry_nodes_folder, f"{geonode['name']}.blend"), "wb").write(response.content)
+
+# Download assets to proxies folder
+def update_asset():
+    wm = bpy.context.window_manager
+    url = "https://remitriadi.com/api/getAllAssetsName"
+    r = requests.get(url)
+    
+    # Online Assets
+    online_assets = sorted(r.json())
+
+    # Offline Assets
+    def get_assets_list_from_folder():
+        downloaded_list = os.listdir(downloaded_folder)
+        proxies_list = os.listdir(proxies_folder)
+        all_list = downloaded_list + proxies_list
+        filtered_list = list(filter(lambda x: '.blend' in x, all_list))
+        map_list = [item.replace(".blend","") for item in filtered_list]
+        return map_list
+    
+    offline_assets = get_assets_list_from_folder()
+    
+    # Asset to be downloaded
+    assets_to_be_downloaded = []
+    for asset in online_assets:
+        if asset not in offline_assets:
+            assets_to_be_downloaded.append(asset)
+
+    total_assets = len(assets_to_be_downloaded)
+    # Start Updating
+    for index, asset in enumerate(assets_to_be_downloaded):
+        # Check if it's not in downloaded folder and proxies folder
+        url = f"http://remitriadi.org/proxies/{asset}.blend"
+        response = requests.get(url)
+        open(os.path.join(proxies_folder, f"{asset}.blend"), "wb").write(response.content)
+
+        #If finished
+        if index == total_assets - 1:
+            wm.remi_re_update_percentage = 100
+            # Delete handler after finished
+            # Unregister handlers
+            for h in bpy.app.handlers.save_post:
+                if h.__name__ == 'assign_remi_library_handler':
+                    bpy.app.handlers.load_post.remove(h)
+        else:
+            #Update download
+            percentage = (index/total_assets) * 100
+            wm.remi_re_update_percentage = percentage
+            report_info(f"Updating new Remi Library assets: {index + 1}/{total_assets}.")
+
 def assign_remi_library_path():
     Path(downloaded_folder).mkdir(parents=True, exist_ok=True)
     Path(proxies_folder).mkdir(parents=True, exist_ok=True)
@@ -87,84 +184,11 @@ def assign_remi_library_path():
             f.write(output_string)
 
 def update_assets_browser():
-    # Purge all corrupted proxies
-    proxies_list = os.listdir(proxies_folder)
-    for proxies_file in proxies_list:
-        proxies_filepath = os.path.join(proxies_folder, proxies_file)
-        file_stats = os.stat(proxies_filepath)
-        #Purge corrupted
-        if(file_stats.st_size < 10000):
-            os.remove(proxies_filepath)
-        # Purge duplicated in downloaded
-        downloaded_filepath = os.path.join(downloaded_folder, proxies_file)
-        if(os.path.exists(downloaded_filepath)):
-            os.remove(proxies_filepath)
-
-    # Request to backend
-    # Download all geonodes to geonodes folder
-    def update_geonodes():
-        url = "https://remitriadi.com/api/getAllGeoNodesName"
-        r = requests.get(url)
-
-        geonodes_online = sorted(r.json())
-        # Start Updating
-        for geonode in geonodes_online:
-            # Check if it's not in downloaded folder and proxies folder
-            url = f"http://remitriadi.org/geometry_nodes/{geonode}.blend"
-            response = requests.get(url)
-            open(os.path.join(geometry_nodes_folder, f"{geonode}.blend"), "wb").write(response.content)
-
-    # Download assets to proxies folder
-    def update_asset():
-        wm = bpy.context.window_manager
-        url = "https://remitriadi.com/api/getAllAssetsName"
-        r = requests.get(url)
-        
-        # Online Assets
-        online_assets = sorted(r.json())
-
-        # Offline Assets
-        def get_assets_list_from_folder():
-            downloaded_list = os.listdir(downloaded_folder)
-            proxies_list = os.listdir(proxies_folder)
-            all_list = downloaded_list + proxies_list
-            filtered_list = list(filter(lambda x: '.blend' in x, all_list))
-            map_list = [item.replace(".blend","") for item in filtered_list]
-            return map_list
-        
-        offline_assets = get_assets_list_from_folder()
-        
-        # Asset to be downloaded
-        assets_to_be_downloaded = []
-        for asset in online_assets:
-            if asset not in offline_assets:
-                assets_to_be_downloaded.append(asset)
-
-        total_assets = len(assets_to_be_downloaded)
-        # Start Updating
-        for index, asset in enumerate(assets_to_be_downloaded):
-            # Check if it's not in downloaded folder and proxies folder
-            url = f"http://remitriadi.org/proxies/{asset}.blend"
-            response = requests.get(url)
-            open(os.path.join(proxies_folder, f"{asset}.blend"), "wb").write(response.content)
-
-            #If finished
-            if index == total_assets - 1:
-                wm.remi_re_update_percentage = 100
-                # Delete handler after finished
-                # Unregister handlers
-                for h in bpy.app.handlers.save_post:
-                    if h.__name__ == 'assign_remi_library_handler':
-                        bpy.app.handlers.load_post.remove(h)
-            else:
-                #Update download
-                percentage = (index/total_assets) * 100
-                wm.remi_re_update_percentage = percentage
-                report_info(f"Updating new Remi Library assets: {index + 1}/{total_assets}.")
-    
     def update_all():
+        purge_corrupted_assets()
         update_geonodes()
         update_asset()
+        update_addons()
 
     t = threading.Thread(target=update_all, args=())
     t.start()
