@@ -101,10 +101,7 @@ def update_geonodes():
         geonode_version = geonode['version'].split('.')
         geonode_version_value = get_version_value(geonode_version)
 
-        print(geonode_version_value, blender_version_value)
-
         if geonode_version_value <= blender_version_value:
-            print('THIS GEONODE WILL BE DOWNLOADED')
             # Check if it's not in downloaded folder and proxies folder
             url = f"http://remitriadi.org/geometry_nodes/{geonode['name']}.blend"
             response = requests.get(url)
